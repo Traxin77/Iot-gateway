@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  go-iot-gateway:
+    build: ./iot-go-gateway
+    container_name: go-iot-gateway
+    ports:
+      - "8081:8081"  
+      - "8080:8080"  
+    volumes:
+      - ./iot-go-gateway/config.yaml:/root/config.yaml
+    restart: always
+
+  coap-to-http:
+    build: ./coap-http
+    container_name: coap-http-bridge
+    ports:
+      - "5683:5683/udp"
+    environment:
+      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
+    restart: always
+    depends_on:
+      - go-iot-gateway
+
+  websocket-to-http:
+    build: ./websocket-http
+    container_name: websocket-http-bridge
+    ports:
+      - "5000:5000"
+    environment:
+      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
+    restart: always
+    depends_on:
+      - go-iot-gateway
+
+  modbus-to-http:
+    build: ./modbus-http
+    container_name: modbus-http-bridge
+    environment:
+      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
+      - MODBUS_IP=192.168.141.173
+      - MODBUS_PORT=1502
+    restart: always
+    depends_on:
+      - go-iot-gateway
+
+  mqtt-to-http:
+    build: ./mqtt-http
+    container_name: mqtt-http-bridge
+    environment:
+      - MQTT_SERVER=mqtt://mqtt-broker:1883
+      - MQTT_TOPIC=sensor/dht11
+      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
+    restart: always
+    depends_on:
+      - mqtt-broker
+      - go-iot-gateway
+
+  mqtt-broker:
+    image: eclipse-mosquitto:latest
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: always
+

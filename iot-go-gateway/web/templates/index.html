@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Gateway Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+    <header>
+        <h1>IoT Gateway Dashboard</h1>
+        <div id="connection-status">Status: Connecting...</div>
+    </header>
+
+    <main>
+        <section class="alerts-section">
+            <h2>Alerts</h2>
+            <ul id="alerts-list">
+                <li>No alerts yet.</li>
+            </ul>
+        </section>
+
+        <section class="chart-section">
+            <h2>Real-time Data Chart</h2>
+            <div class="chart-container">
+                <canvas id="dataChart"></canvas>
+            </div>
+             <p><em>Showing Temperature (°C) and Humidity (%).</em></p>
+        </section>
+
+        <section class="data-section">
+            <h2>Latest Data Points</h2>
+            <ul id="realtime-data-list">
+                <li>Waiting for data...</li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>Go IoT Gateway</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@^2"></script>
+     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@^1"></script>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
