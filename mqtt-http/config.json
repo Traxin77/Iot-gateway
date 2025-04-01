@@ -1,0 +1,7 @@
+{
+  "mqtt_server": "mqtt://mqtt-broker:1883",
+  "mqtt_topic": "sensor/dht11",
+  "http_endpoint": "http://go-iot-gateway:8080/data"
+}
+
+

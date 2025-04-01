@@ -1,0 +1,15 @@
+# config.yaml
+server:
+  data_port: 8080
+  ui_port: 8081
+anomaly:
+  rules:
+    # Example: Simple threshold rules
+    temperature:
+      min: 5.0
+      max: 35.0
+    humidity:
+      min: 20.0
+      max: 85.0
+    # Add other sensor rules as needed
+# storage: # Optional: database connection details if using one
