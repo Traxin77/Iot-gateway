@@ -12,6 +12,7 @@ import (
 	"log"
 	"time"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	gwebsocket "github.com/gorilla/websocket" // Alias to avoid name conflict
@@ -30,9 +31,10 @@ type APIHandler struct {
 	alerter  *alerting.Alerter
 	tmpl     *template.Template
 	webDir   string
+	apiKey   string
 }
 
-func NewAPIHandler(store *storage.MemoryStore, detector *anomaly.Detector, hub *websocket.Hub, alerter *alerting.Alerter, webDir string) *APIHandler {
+func NewAPIHandler(store *storage.MemoryStore, detector *anomaly.Detector, hub *websocket.Hub, alerter *alerting.Alerter, webDir string, apiKey string) *APIHandler {
 	// Load templates
     tmplPath := filepath.Join(webDir, "templates", "*.html")
 	tmpl, err := template.ParseGlob(tmplPath)
@@ -47,6 +49,25 @@ func NewAPIHandler(store *storage.MemoryStore, detector *anomaly.Detector, hub *
 		alerter:  alerter,
 		tmpl:     tmpl,
 		webDir:   webDir,
+		apiKey:	  apiKey,
+	}
+}
+
+func (h *APIHandler) Authenticate(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		providedKey := r.Header.Get("X-API-Key")
+		if providedKey == "" {
+			log.Println("Auth Error: Missing X-API-Key header")
+			http.Error(w, "Forbidden: Missing API Key", http.StatusForbidden)
+			return
+		}
+		if providedKey != h.apiKey {
+			log.Printf("Auth Error: Invalid API Key provided: %s", providedKey)
+			http.Error(w, "Forbidden: Invalid API Key", http.StatusForbidden)
+			return
+		}
+		// If keys match, proceed to the next handler
+		next(w, r)
 	}
 }
 

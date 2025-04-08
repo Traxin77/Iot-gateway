@@ -9,7 +9,9 @@ import (
 	"iot-go-gateway/internal/config"
 	"iot-go-gateway/internal/storage"
 	"iot-go-gateway/internal/websocket"
+	"iot-go-gateway/internal/auth"
 	"log"
+	"crypto/tls"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,7 +23,9 @@ func main() {
     // --- Configuration ---
     configPath := flag.String("config", ".", "Path to the configuration file directory")
     webDir := flag.String("webdir", "./web", "Path to the web assets directory")
-    flag.Parse()
+    certFile := flag.String("cert", "certs/server.crt", "Path to TLS certificate file")
+    keyFile := flag.String("key", "certs/server.key", "Path to TLS key file")
+	flag.Parse()
 
 	err := config.LoadConfig(*configPath)
 	if err != nil {
@@ -29,14 +33,17 @@ func main() {
 		// Application might still run with defaults set in config.LoadConfig
 	}
 	cfg := &config.AppConfig // Use the loaded config
-
+	apiKey := os.Getenv("GATEWAY_API_KEY")
+	if apiKey == "" {
+		log.Fatal("GATEWAY_API_KEY environment variable not set")
+	}
 	// --- Initialize Components ---
 	store := storage.NewMemoryStore()
 	hub := websocket.NewHub()
 	detector := anomaly.NewDetector(cfg)
 	alerter := alerting.NewAlerter(hub) // Pass hub to alerter
 
-	apiHandler := api.NewAPIHandler(store, detector, hub, alerter, *webDir)
+	apiHandler := api.NewAPIHandler(store, detector, hub, alerter, *webDir, apiKey)
 
 	// --- Start WebSocket Hub ---
 	go hub.Run()
@@ -45,27 +52,35 @@ func main() {
 	dataRouter := api.SetupDataRouter(apiHandler)
 	uiRouter := api.SetupUIRouter(apiHandler)
 
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
 	dataServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.DataPort),
 		Handler: dataRouter,
+		TLSConfig: tlsConfig,
 	}
 	uiServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.UIPort),
 		Handler: uiRouter,
+		TLSConfig: tlsConfig,
 	}
 
 	// --- Start Servers in Goroutines ---
 	go func() {
-		log.Printf("Starting Data Ingestion Server on port %d", cfg.Server.DataPort)
-		if err := dataServer.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("Data Server ListenAndServe error: %v", err)
+		log.Printf("Starting Data Ingestion Server (HTTPS) on port %d", cfg.Server.DataPort)
+		// --> Use ListenAndServeTLS <--
+		if err := dataServer.ListenAndServeTLS(*certFile, *keyFile); err != http.ErrServerClosed {
+			log.Fatalf("Data Server ListenAndServeTLS error: %v", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting Web UI & WebSocket Server on port %d", cfg.Server.UIPort)
-		if err := uiServer.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("UI Server ListenAndServe error: %v", err)
+		log.Printf("Starting Web UI & WebSocket Server (HTTPS/WSS) on port %d", cfg.Server.UIPort)
+		// --> Use ListenAndServeTLS <--
+		if err := uiServer.ListenAndServeTLS(*certFile, *keyFile); err != http.ErrServerClosed {
+			log.Fatalf("UI Server ListenAndServeTLS error: %v", err)
 		}
 	}()
 
