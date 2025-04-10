@@ -3,27 +3,35 @@ package api
 import (
 	"net/http"
 	"path/filepath"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
-func SetupDataRouter(handler *APIHandler) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/data", handler.HandleDataIngest) // Endpoint for Python scripts
-	return mux
+func SetupDataRouter(apiHandler *APIHandler) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// --> Apply Authentication Middleware to /data endpoint <--
+	r.Post("/data", apiHandler.Authenticate(apiHandler.HandleDataIngest))
+
+	return r
 }
 
-func SetupUIRouter(handler *APIHandler) *http.ServeMux {
-	mux := http.NewServeMux()
+func SetupUIRouter(apiHandler *APIHandler) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	r.Get("/", apiHandler.ServeWebUI)
+	r.Get("/ws", apiHandler.HandleWebSocket)
 
 	// Serve static files (CSS, JS)
-	staticDir := http.Dir(filepath.Join(handler.webDir, "static"))
-	fileServer := http.FileServer(staticDir)
-	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
+	staticPath := filepath.Join(apiHandler.webDir, "static")
+	fs := http.FileServer(http.Dir(staticPath))
+	r.Handle("/static/*", http.StripPrefix("/static/", fs))
 
-	// WebSocket endpoint
-	mux.HandleFunc("/ws", handler.HandleWebSocket)
 
-	// Serve the main HTML page
-	mux.HandleFunc("/", handler.ServeWebUI)
-
-	return mux
+	return r
 }
+

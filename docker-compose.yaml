@@ -5,11 +5,25 @@ services:
     build: ./iot-go-gateway
     container_name: go-iot-gateway
     ports:
-      - "8081:8081"  
-      - "8080:8080"  
+      - "8080:8080"
+      - "8081:8081"
     volumes:
-      - ./iot-go-gateway/config.yaml:/root/config.yaml
-    restart: always
+      - ./iot-go-gateway/config.yaml:/app/config.yaml # Assuming Dockerfile copies app to /app
+      - ./certs/server.crt:/app/certs/server.crt:ro # Mount server certificate
+      - ./certs/server.key:/app/certs/server.key:ro # Mount server key
+      # Optional: Mount CA cert if Go needs to verify client certs (mTLS) or broker certs
+      # - ./certs/ca.crt:/app/certs/ca.crt:ro
+    environment:
+      # CONFIG_PATH needs to match where config.yaml is in the container
+      - CONFIG_PATH=/app
+      # GATEWAY_API_KEY loaded from .env file or environment
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY}
+      # Pass cert paths via env vars (or use flags as currently in main.go)
+      - CERT_FILE=/app/certs/server.crt
+      - KEY_FILE=/app/certs/server.key
+    networks:
+      - iot-network
+    restart: unless-stopped
 
   coap-to-http:
     build: ./coap-http
@@ -17,8 +31,13 @@ services:
     ports:
       - "5683:5683/udp"
     environment:
-      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
-    restart: always
+      # Updated to HTTPS and correct data port (8080)
+      - HTTP_ENDPOINT=https://go-iot-gateway:8080/data
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY} # Load from .env file or environment
+      # Add variables for DTLS if implemented
+    networks:
+      - iot-network
+    restart: unless-stopped
     depends_on:
       - go-iot-gateway
 
@@ -26,10 +45,22 @@ services:
     build: ./websocket-http
     container_name: websocket-http-bridge
     ports:
-      - "5000:5000"
+      - "8765:8765" # WSS Port (can be same as Go UI/WS if desired, depends on setup)
     environment:
-      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
-    restart: always
+      # Updated to correct data port (8080)
+      - HTTP_ENDPOINT=https://go-iot-gateway:8080/data
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY} # Load from .env file or environment
+      - WS_PORT=8765 # Internal port for the python server
+      # Paths inside the container for WSS certificates
+      - WS_CERT_FILE=/certs/server.crt
+      - WS_KEY_FILE=/certs/server.key
+    volumes:
+      # Mount certs for WSS into the container
+      - ./certs/server.crt:/certs/server.crt:ro
+      - ./certs/server.key:/certs/server.key:ro
+    networks:
+      - iot-network
+    restart: unless-stopped
     depends_on:
       - go-iot-gateway
 
@@ -37,10 +68,18 @@ services:
     build: ./modbus-http
     container_name: modbus-http-bridge
     environment:
-      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
-      - MODBUS_IP=192.168.141.173
-      - MODBUS_PORT=1502
-    restart: always
+      # Updated to HTTPS and correct data port (8080)
+      - HTTP_ENDPOINT=https://go-iot-gateway:8080/data
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY} # Load from .env file or environment
+      - MODBUS_IP=your_modbus_device_ip # Needs configuration
+      - MODBUS_PORT=502
+      # Optional Modbus config
+      # - MODBUS_SLAVE_ID=1
+      # - POLL_INTERVAL=10
+    networks:
+      # This network needs access to the Modbus device IP
+      - iot-network
+    restart: unless-stopped
     depends_on:
       - go-iot-gateway
 
@@ -48,22 +87,53 @@ services:
     build: ./mqtt-http
     container_name: mqtt-http-bridge
     environment:
-      - MQTT_SERVER=mqtt://mqtt-broker:1883
-      - MQTT_TOPIC=sensor/dht11
-      - HTTP_ENDPOINT=http://go-iot-gateway:8080/data
-    restart: always
+      # Updated to HTTPS and correct data port (8080)
+      - HTTP_ENDPOINT=https://go-iot-gateway:8080/data
+      # Updated to MQTTS and TLS port 8883
+      - MQTT_SERVER=mqtts://mqtt-broker:8883
+      - MQTT_TOPIC=sensor/dht11 # Or your desired topic(s)
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY} # Load from .env file or environment
+      # MQTT Auth/TLS configuration from .env file or environment
+      - MQTT_USER=${MQTT_USER}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_CA_CERT=/certs/ca.crt # Path inside container if using CA cert
+      # Optional: Client certs for MQTT mTLS
+      # - MQTT_CLIENT_ID=mqtt-http-bridge
+      # - MQTT_CERT_FILE=/certs/client.crt
+      # - MQTT_KEY_FILE=/certs/client.key
+    volumes:
+      # Mount CA cert needed for MQTT TLS verification
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      # Optional: Mount client certs if needed for MQTT mTLS
+      # - ./certs/client.crt:/certs/client.crt:ro
+      # - ./certs/client.key:/certs/client.key:ro
+    networks:
+      - iot-network
+    restart: unless-stopped
     depends_on:
       - mqtt-broker
       - go-iot-gateway
 
   mqtt-broker:
-    image: eclipse-mosquitto:latest
+    image: eclipse-mosquitto:2.0 # Use version 2+ for better TLS/Auth features
     container_name: mqtt-broker
     ports:
-      - "1883:1883"
+      # - "1883:1883" # Optional: Keep plain MQTT if needed for legacy clients
+      - "8883:8883" # MQTT over TLS (Configured in mosquitto.conf)
+      # - "9001:9001" # Optional: MQTT over WebSockets
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - ./mosquitto/log:/mosquitto/log
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro # Mount custom config
+      - ./mosquitto_passwd:/mosquitto/config/mosquitto_passwd:ro # Mount password file
+      - ./certs/server.crt:/mosquitto/certs/server.crt:ro # Mount broker certificate
+      - ./certs/server.key:/mosquitto/certs/server.key:ro # Mount broker key
+      - ./certs/ca.crt:/mosquitto/certs/ca.crt:ro       # Mount CA certificate
+      - ./mosquitto/log:/mosquitto/log # Mount log directory (optional)
+      - ./mosquitto/data:/mosquitto/data # Mount data directory (optional, for persistence)
+    networks:
+      - iot-network
+    restart: unless-stopped
 
-    restart: always
-
+networks:
+  iot-network:
+    driver: bridge
+# --- End docker-compose.yaml ---

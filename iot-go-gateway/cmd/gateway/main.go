@@ -2,6 +2,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"iot-go-gateway/internal/alerting"
 	"iot-go-gateway/internal/anomaly"
@@ -9,27 +11,24 @@ import (
 	"iot-go-gateway/internal/config"
 	"iot-go-gateway/internal/storage"
 	"iot-go-gateway/internal/websocket"
-	"iot-go-gateway/internal/auth"
 	"log"
-	"crypto/tls"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-    "flag"
 )
 
 func main() {
-    // --- Configuration ---
-    configPath := flag.String("config", ".", "Path to the configuration file directory")
-    webDir := flag.String("webdir", "./web", "Path to the web assets directory")
-    certFile := flag.String("cert", "certs/server.crt", "Path to TLS certificate file")
-    keyFile := flag.String("key", "certs/server.key", "Path to TLS key file")
+	// --- Configuration ---
+	configPath := flag.String("config", ".", "Path to the configuration file directory")
+	webDir := flag.String("webdir", "./web", "Path to the web assets directory")
+	certFile := flag.String("cert", "certs/server.crt", "Path to TLS certificate file")
+	keyFile := flag.String("key", "certs/server.key", "Path to TLS key file")
 	flag.Parse()
 
 	err := config.LoadConfig(*configPath)
 	if err != nil {
-        log.Printf("Error loading config, continuing with defaults: %v", err)
+		log.Printf("Error loading config, continuing with defaults: %v", err)
 		// Application might still run with defaults set in config.LoadConfig
 	}
 	cfg := &config.AppConfig // Use the loaded config
@@ -57,13 +56,13 @@ func main() {
 	}
 
 	dataServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.DataPort),
-		Handler: dataRouter,
+		Addr:      fmt.Sprintf(":%d", cfg.Server.DataPort),
+		Handler:   dataRouter,
 		TLSConfig: tlsConfig,
 	}
 	uiServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.UIPort),
-		Handler: uiRouter,
+		Addr:      fmt.Sprintf(":%d", cfg.Server.UIPort),
+		Handler:   uiRouter,
 		TLSConfig: tlsConfig,
 	}
 

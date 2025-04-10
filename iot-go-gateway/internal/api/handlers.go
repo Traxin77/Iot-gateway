@@ -12,8 +12,8 @@ import (
 	"log"
 	"time"
 	"net/http"
-	"os"
 	"path/filepath"
+	"fmt"
 
 	gwebsocket "github.com/gorilla/websocket" // Alias to avoid name conflict
 )
@@ -81,25 +81,40 @@ func (h *APIHandler) HandleDataIngest(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("Error reading request body: %v", err)
-		http.Error(w, "Bad Request", http.StatusBadRequest)
+		http.Error(w, "Bad Request: Cannot read body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
+	source := r.URL.Query().Get("source")
+	if source == "" {
+		source = r.Header.Get("X-Source-Identifier") // Or check a header
+	}
+	if source == "" {
+		source = "unknown" // Default if not specified
+	}
+	// --- End Determine Source ---
 
-	// TODO: Determine source based on request path or header if needed
-	source := "unknown" // Example: You might use different paths like /data/mqtt
 
-	parsedData, err := data.Parse(body, source)
+	// Pass nil for config if parser doesn't use it, or pass h.detector.config if needed
+	parsedData, err := data.Parse(body, source, nil)
 	if err != nil {
-		log.Printf("Error parsing data: %v", err)
-		http.Error(w, "Bad Request: Cannot parse JSON", http.StatusBadRequest)
+		log.Printf("Error parsing data from source '%s': %v", source, err)
+		// Provide more specific error message if possible
+		errMsg := fmt.Sprintf("Bad Request: Cannot parse payload. Error: %v", err)
+		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
+
+    // Ensure DeviceID is populated if possible (e.g. from source-specific logic if not in payload)
+    if parsedData.DeviceID == "" {
+         parsedData.DeviceID = fmt.Sprintf("device_from_%s", source) // Example default
+    }
 
 	// 1. Store data (optional)
 	h.store.Add(parsedData)
 
 	// 2. Check for anomalies
+    // Pass config explicitly if needed, or detector holds it
 	anomalies := h.detector.Check(parsedData)
 
 	// 3. Process alerts if any anomalies found
@@ -110,10 +125,10 @@ func (h *APIHandler) HandleDataIngest(w http.ResponseWriter, r *http.Request) {
 	// 4. Broadcast the received data via WebSocket
 	h.hub.BroadcastData(parsedData)
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "received"})
+	json.NewEncoder(w).Encode(map[string]string{"status": "received", "source": source})
 }
-
 // HandleWebSocket upgrades connections and registers clients with the hub
 func (h *APIHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)

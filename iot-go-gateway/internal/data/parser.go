@@ -5,59 +5,123 @@ import (
 	"encoding/json"
 	"log"
 	"time"
+	"fmt"
+	"iot-go-gateway/internal/config"
 )
 
 // Parse tries to unmarshal raw data into UniversalDataPoint
-func Parse(rawData []byte, source string) (*UniversalDataPoint, error) {
-	var data UniversalDataPoint
-
-	// First, try unmarshalling into a flexible map to inspect
+func Parse(rawData []byte, source string, cfg *config.Config) (*UniversalDataPoint, error) { // Pass config if needed for rules
 	var genericPayload map[string]interface{}
 	if err := json.Unmarshal(rawData, &genericPayload); err != nil {
-		log.Printf("Error unmarshalling raw data: %v", err)
-		return nil, err
+		log.Printf("Error unmarshalling raw data for source %s: %v", source, err)
+		return nil, fmt.Errorf("invalid JSON format: %w", err)
 	}
 
-	// --- Adapt this logic based on your actual payload structures ---
-	// Example: Try to extract common fields or handle specific known structures
-	data.Timestamp = time.Now() // Default timestamp, try to overwrite if available in payload
-	data.Source = source
-	data.Metrics = make(map[string]interface{})
-    data.OriginalPayload = rawData
+	log.Printf("Received payload from source '%s': %+v", source, genericPayload)
 
-	// Look for known keys (e.g., from Modbus script)
-	if temp, ok := genericPayload["temperature"].(float64); ok {
-		data.Metrics["temperature"] = temp
+	point := &UniversalDataPoint{
+		Timestamp:     time.Now(), // Default, try to overwrite
+		Source:        source,
+		Metrics:       make(map[string]interface{}),
+		OriginalPayload: rawData,
 	}
-	if hum, ok := genericPayload["humidity"].(float64); ok {
-		data.Metrics["humidity"] = hum
+
+	// --- Extract Common Fields ---
+	if id, ok := genericPayload["device_id"].(string); ok {
+		point.DeviceID = id
+		delete(genericPayload, "device_id") // Remove from metrics map later
+	} else if id, ok := genericPayload["sensor_id"].(string); ok {
+		point.DeviceID = id // Use sensor_id as device_id if device_id not present
+		delete(genericPayload, "sensor_id")
 	}
-    // Look for device ID or other common fields
-	if id, ok := genericPayload["sensor_id"].(string); ok {
-        data.DeviceID = id
-	} else if id, ok := genericPayload["device"].(string); ok {
-        data.DeviceID = id
+
+	if tsVal, ok := genericPayload["timestamp"]; ok {
+		parsedTime, err := parseTimestamp(tsVal)
+		if err == nil {
+			point.Timestamp = parsedTime
+		} else {
+			log.Printf("Warning: Could not parse timestamp from payload for source %s: %v", source, err)
+		}
+		delete(genericPayload, "timestamp")
+	}
+
+	// --- Process Remaining Fields as Metrics ---
+	// Iterate through the map and assign recognized numeric types to metrics
+	for key, value := range genericPayload {
+		switch v := value.(type) {
+		case float64:
+			point.Metrics[key] = v
+		case int:
+			point.Metrics[key] = float64(v) // Convert int to float64
+		case int64:
+			point.Metrics[key] = float64(v) 
+		case json.Number: 
+			fVal, err := v.Float64()
+			if err == nil {
+				point.Metrics[key] = fVal
+			} else {
+				log.Printf("Warning: Could not convert json.Number '%s' to float64 for key '%s', source '%s'", v.String(), key, source)
+				point.Metrics[key] = v.String() // Store as string if conversion fails
+			}
+        case string:
+             point.Metrics[key] = v
+        case bool:
+             point.Metrics[key] = v
+		default:
+			log.Printf("Warning: Skipping metric '%s' with unhandled type %T for source '%s'", key, v, source)
+		}
+	}
+
+    if len(point.Metrics) == 0 {
+         log.Printf("Warning: No metrics extracted from payload for source '%s'. Original: %s", source, string(rawData))
     }
 
-	// If specific fields aren't found, maybe the whole payload is metrics?
-    if len(data.Metrics) == 0 {
-        // Be careful here - might need more checks
-        data.Metrics = genericPayload
-        // Potentially remove non-metric fields if necessary
-        delete(data.Metrics, "timestamp") // Example
-        delete(data.Metrics, "topic")     // Example
-    }
 
-    // Try to parse timestamp if present (adapt key and format)
-    if tsStr, ok := genericPayload["timestamp"].(string); ok {
-        // Add robust timestamp parsing here (e.g., multiple formats)
-        if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
-            data.Timestamp = t
+	log.Printf("Parsed data for source '%s': DeviceID=%s, Timestamp=%s, Metrics=%+v", source, point.DeviceID, point.Timestamp.Format(time.RFC3339), point.Metrics)
+	return point, nil
+}
+
+// parseTimestamp tries various common formats
+func parseTimestamp(ts interface{}) (time.Time, error) {
+	switch v := ts.(type) {
+	case string:
+		// Try common string formats
+		formats := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02T15:04:05", // ISO 8601 without timezone
+			"2006-01-02 15:04:05", // Common space format
+		}
+		for _, format := range formats {
+			if t, err := time.Parse(format, v); err == nil {
+				return t, nil
+			}
+		}
+		return time.Time{}, fmt.Errorf("unrecognized string timestamp format: %s", v)
+	case float64:
+		// Assume Unix timestamp (seconds with optional milliseconds)
+		sec := int64(v)
+		nsec := int64((v - float64(sec)) * 1e9)
+		return time.Unix(sec, nsec), nil
+	case int:
+		return time.Unix(int64(v), 0), nil // Assume Unix seconds
+    case int64:
+        return time.Unix(v, 0), nil // Assume Unix seconds
+	case json.Number:
+		
+		fVal, err := v.Float64()
+		if err == nil {
+			sec := int64(fVal)
+			nsec := int64((fVal - float64(sec)) * 1e9)
+			return time.Unix(sec, nsec), nil
+		}
+        // Try parsing as int (Unix timestamp)
+        iVal, err := v.Int64()
+        if err == nil {
+             return time.Unix(iVal, 0), nil
         }
-    }
-	// --- End of adaptation section ---
-
-
-	log.Printf("Parsed data: %+v", data)
-	return &data, nil
+		return time.Time{}, fmt.Errorf("unrecognized json.Number timestamp format: %s", v.String())
+	default:
+		return time.Time{}, fmt.Errorf("unsupported timestamp type: %T", v)
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"context"
 )
 
 // Config holds authentication configuration
